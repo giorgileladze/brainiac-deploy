@@ -1,34 +1,74 @@
-const http = require('http');
-const { spawn } = require('child_process');
+const axios = require('axios');
+const fs = require('fs');
+const { exec } = require('child_process');
 
-const port = 8088;
+const repoOwner = 'bklomi';
+const repoName = 'brainiac-front';
+const localFilePath = './lastCommitSHA.txt';
+const personalAccessToken = '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';
 
-const server = http.createServer((req, res) => {
-  if (req.url !== '/brainiac-deploy') {
-    res.writeHead(404);
-    res.end();
-    return;
+const getLatestCommitSHA = async () => {
+  try {
+    const response = await axios.get(`https://api.github.com/repos/${repoOwner}/${repoName}/commits`, {
+      headers: {
+        Authorization: `Bearer ${personalAccessToken}`,
+      },
+    });
+    const latestCommitSHA = response.data[0].sha;
+    return latestCommitSHA;
+  } catch (error) {
+    console.error('Error fetching latest commit SHA:', error.message);
+    throw error;
   }
+};
 
-  const deploy = spawn('/bin/bash', ['/home/giorgi/programing/brainiac/deploy/deploy.sh']);
+const hasCodebaseChanged = async (latestCommitSHA) => {
+  try {
+    if (fs.existsSync(localFilePath)) {
+      const lastCommitSHA = fs.readFileSync(localFilePath, 'utf-8');
+      return latestCommitSHA !== lastCommitSHA;
+    } else {
+      return true; // No previous commit SHA found, assume codebase has changed
+    }
+  } catch (error) {
+    console.error('Error checking if codebase has changed:', error.message);
+    throw error;
+  }
+};
 
-  deploy.stdout.on('data', (data) => {
-    console.log(`stdout: ${data}`);
+const executeDeployScript = () => {
+  exec('sh deploy.sh', (error, stdout, stderr) => {
+    if (error) {
+      console.error('Error executing deploy.sh:', error.message);
+    } else {
+      console.log('Deploy script executed successfully');
+    }
   });
+};
 
-  deploy.stderr.on('data', (data) => {
-    console.error(`stderr: ${data}`);
-  });
+const updateLastCommitSHA = (latestCommitSHA) => {
+  fs.writeFileSync(localFilePath, latestCommitSHA);
+};
 
-  deploy.on('close', (code) => {
-    console.log(`child process exited with code ${code}`);
-  });
+const checkAndUpdateCodebase = async () => {
+  try {
+    const latestCommitSHA = await getLatestCommitSHA();
+    const codebaseChanged = await hasCodebaseChanged(latestCommitSHA);
+    if (codebaseChanged) {
+      executeDeployScript();
+      updateLastCommitSHA(latestCommitSHA);
+    } else {
+      console.log('Codebase has not changed since the last pull');
+    }
+  } catch (error) {
+    console.error('An error occurred:', error.message);
+  }
+};
 
-  res.writeHead(200);
-  res.end('Deploying...');
-});
+checkAndUpdateCodebase();
+setInterval(checkAndUpdateCodebase, 10 * 1000); // 10 seconds
 
-server.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}/`);
-});
+
+
+
 
